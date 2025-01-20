@@ -1,16 +1,7 @@
-def get_min_role(min_role: str, require_workspace: bool = True, require_domain: bool = False, allow_super_user: bool = True):
+def get_min_role(min_role: str, allow_super_user: bool = True):
     """
     Factory function for a dependency that ensures:
-    1. User has at least `min_role` in a specified workspace.
-    2. Optionally restricts `super_user` access.
-    3. Optionally skips workspace validation if `require_workspace=False`.
-    4. Optionally validates domain membership if `require_domain=True`.
-
-    Parameters:
-    - min_role: The minimum role required for the operation.
-    - require_workspace: Whether workspace validation is required (default: True).
-    - require_domain: Whether domain validation is required (default: False).
-    - allow_super_user: If True (default), `super_user` bypasses all checks.
+    - Dynamically validates workspace and domain based on the context.
     """
     if min_role not in Role_Rank:
         raise ValueError(f"Invalid role specified: {min_role}")
@@ -24,27 +15,19 @@ def get_min_role(min_role: str, require_workspace: bool = True, require_domain: 
         """
         Validate the user's role for the specified workspace and domain.
         """
-        # 1. Restrict super_user if `allow_super_user` is False
+        # Handle super_user access
         if user.is_super_user and not allow_super_user:
             raise HTTPException(
                 status_code=403, detail="Access Denied: Super user access is restricted for this route."
             )
 
-        # 2. Short-circuit if the user is a super_user and `allow_super_user` is True
         if user.is_super_user:
             return user
 
-        # 3. Extract workspace_id and domain_id from path or body
-        workspace_id: Optional[UUID] = None
-        domain_id: Optional[UUID] = None
+        # Extract workspace_id and domain_id
+        workspace_id: Optional[UUID] = request.path_params.get("workspace_id")
+        domain_id: Optional[UUID] = request.path_params.get("domain_id")
 
-        if require_workspace:
-            workspace_id = request.path_params.get("workspace_id")
-
-        if require_domain:
-            domain_id = request.path_params.get("domain_id")
-
-        # Parse request body for POST/PUT/PATCH
         if request.method in {"POST", "PUT", "PATCH"}:
             try:
                 body = request.json()
@@ -53,20 +36,18 @@ def get_min_role(min_role: str, require_workspace: bool = True, require_domain: 
                 if "domain_id" in body and not domain_id:
                     domain_id = body["domain_id"]
             except:
-                pass  # No body or invalid JSON
+                pass  # Body parsing failed; skip workspace_id and domain_id
 
-        # 4. Workspace role check
-        if require_workspace:
-            if not workspace_id:
-                raise HTTPException(
-                    status_code=400, detail="Workspace ID is required but not provided."
-                )
+        # Skip workspace validation if no workspace_id is required
+        if min_role == "app_user" and not workspace_id:
+            return user
 
+        # Perform workspace validation if workspace_id is provided
+        if workspace_id:
             user_workspace = session.query(UserWorkspaceLink).filter_by(
                 user_id=user.id, workspace_id=workspace_id
             ).first()
 
-            # Default to app_user if the user has no explicit workspace role
             if not user_workspace:
                 user_workspace_role = "app_user"
             else:
@@ -83,19 +64,8 @@ def get_min_role(min_role: str, require_workspace: bool = True, require_domain: 
                     ),
                 )
 
-        # 5. Domain membership check
-        if require_domain:
-            if not domain_id:
-                raise HTTPException(
-                    status_code=400, detail="Domain ID is required but not provided."
-                )
-
-            if not workspace_id:
-                raise HTTPException(
-                    status_code=400, detail="Workspace ID is required for domain validation."
-                )
-
-            # Check if the user is associated with the domain within the workspace
+        # Perform domain validation if domain_id is present and role requires it
+        if domain_id and min_role == "domain_admin":
             user_workspace = session.query(UserWorkspaceLink).filter_by(
                 user_id=user.id, workspace_id=workspace_id
             ).first()
@@ -116,7 +86,6 @@ def get_min_role(min_role: str, require_workspace: bool = True, require_domain: 
                     detail="Access Denied: You are not associated with the specified domain.",
                 )
 
-        # 6. Return user if all checks pass
         return user
 
     return access_min_role
