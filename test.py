@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from database import SessionLocal, get_db
-from models import Domain, User, UserDomainLink
+from models import Domain, User, UserDomainLink, DomainDatasourceLink
 from schemas import DomainCreate
 
 router = APIRouter(
@@ -51,5 +51,8 @@ def create_domain(domain: DomainCreate, db: Session = Depends(get_db), current_u
     user_domain_link = UserDomainLink(user_id=current_user.id, domain_id=new_domain.id)
     db.add(user_domain_link)
     db.commit()
+
+    # Check for existing DomainDatasourceLink (if applicable)
+    # ... (Logic to check for existing DomainDatasourceLink) ...
 
     return new_domain
