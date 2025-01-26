@@ -1,58 +1,82 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from pydantic import BaseModel
 
-from database import SessionLocal, get_db
-from models import Domain, User, UserDomainLink, DomainDatasourceLink
-from schemas import DomainCreate
-
-router = APIRouter(
-    prefix="/domains",
-    tags=["Domains"]
-)
-
-class DomainBase(BaseModel):
-    name: str
-
-class DomainCreate(DomainBase):
-    pass
-
-class Domain(DomainBase):
-    id: int
-
-    class Config:
-        orm_mode = True
-
-@router.post("/", status_code=status.HTTP_201_CREATED)
-def create_domain(domain: DomainCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def create_domain(db: Session, domain_data: DomainCreate) -> Domain:
     """
-    Create a new domain for the current user.
+    Creates a new domain entry in the database.
+
+    Args:
+        db (Session): The database session.
+        domain_data (DomainCreate): The domain creation data.
+
+    Returns:
+        Domain: The newly created domain.
     """
+    # Initialize the Domain object with the provided data
+    new_domain = Domain(
+        name=domain_data.name,
+        description=domain_data.description,
+        purpose=domain_data.purpose,
+        is_active=domain_data.is_active,
+        workspace_id=domain_data.workspace_id,
+        connection_id=domain_data.connection_id,
+        default_llm_provider=domain_data.default_llm_provider,
+        default_llm_model=domain_data.default_llm_model,
+        last_updated_date=datetime.now(timezone.utc),
+        last_metadata_refresh_date=datetime.now(timezone.utc),
+        last_metadata_update_date=datetime.now(timezone.utc),
+        knowledgebase_validation_status="INPROGRESS"
+    )
 
-    # Check if domain with the same name already exists for the user
-    existing_domain = db.query(Domain).join(UserDomainLink).filter(
-        Domain.name == domain.name,
-        UserDomainLink.user_id == current_user.id
-    ).first()
+    # Add tags if provided
+    if domain_data.tags:
+        new_domain.tags = domain_data.tags
 
-    if existing_domain:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Domain with this name already exists for the user."
-        )
+    # Handle datasources (many-to-many relationship via DomainDatasourceLink)
+    if domain_data.datasource_ids:
+        for datasource_id in domain_data.datasource_ids:
+            link = DomainDatasourceLink(domain_id=new_domain.id, datasource_id=datasource_id)
+            db.add(link)
 
-    # Create the new domain
-    new_domain = Domain(name=domain.name)
+    # Handle knowledge docs (embedded structure in InputData)
+    if domain_data.knowledge_docs:
+        knowledge_base_items = []
+        for target_response in domain_data.knowledge_docs.target_response:
+            knowledge_base_items.append(
+                {
+                    "knowledgebase_type": "target_response",
+                    "value": {
+                        "question": target_response.question,
+                        "sql_query": target_response.sql_query,
+                        "is_valid": target_response.is_valid,
+                        "message": target_response.message,
+                    },
+                }
+            )
+        for kpi_definition in domain_data.knowledge_docs.kpi_definitions:
+            knowledge_base_items.append(
+                {
+                    "knowledgebase_type": "kpi_definition",
+                    "value": {
+                        "kpi_name": kpi_definition.kpi_name,
+                        "kpi_description": kpi_definition.kpi_description,
+                        "kpi_formula": kpi_definition.kpi_formula,
+                        "is_valid": kpi_definition.is_valid,
+                        "message": kpi_definition.message,
+                    },
+                }
+            )
+        for item in knowledge_base_items:
+            knowledge_base = KnowledgeBase(
+                domain_id=new_domain.id,
+                knowledgebase_type=item["knowledgebase_type"],
+                value=item["value"],
+                status="INPROGRESS",
+                knowledgebase_chunk_id=uuid4()
+            )
+            db.add(knowledge_base)
+
+    # Add the new domain to the session and commit
     db.add(new_domain)
     db.commit()
-    db.refresh(new_domain)
-
-    # Link the domain to the current user
-    user_domain_link = UserDomainLink(user_id=current_user.id, domain_id=new_domain.id)
-    db.add(user_domain_link)
-    db.commit()
-
-    # Check for existing DomainDatasourceLink (if applicable)
-    # ... (Logic to check for existing DomainDatasourceLink) ...
+    db.refresh(new_domain)  # Refresh to get the latest data including the generated ID
 
     return new_domain
