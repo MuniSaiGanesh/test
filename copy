@@ -1,0 +1,97 @@
+def create_domain(db: Session, domain_data: DomainCreate):
+    with db.begin_nested():
+        temp_domain_data = db.query(TempOnboardDomain).filter(
+            TempOnboardDomain.session_id == domain_data.session_id
+        ).first()
+ 
+        if not temp_domain_data:
+            raise ValueError("TempOnboardDomain data not found for this session.")
+ 
+        try:
+            onboard_datasource_ids = [UUID(id_str) for id_str in temp_domain_data.datasource_ids.split(",")]
+        except ValueError:
+            raise ValueError("Invalid datasource IDs in TempOnboardDomain.")
+ 
+        if set(domain_data.datasource_ids) != set(onboard_datasource_ids):
+            raise ValueError("Datasource IDs mismatch between DomainCreate and TempOnboardDomain.")
+ 
+        onboard_knowledge_docs = {
+            "target_response": [TargetResponseItem(**item) for item in temp_domain_data.knowledge_docs.get("target_response", [])],
+            "kpi_definitions": [KPIDefinitionItem(**item) for item in temp_domain_data.knowledge_docs.get("kpi_definitions", [])],
+        }
+ 
+        if len(domain_data.knowledge_docs.target_response) != len(onboard_knowledge_docs["target_response"]) or \
+            len(domain_data.knowledge_docs.kpi_definitions) != len(onboard_knowledge_docs["kpi_definitions"]):
+            raise ValueError("Knowledge docs mismatch between DomainCreate and TempOnboardDomain.")
+       
+        if temp_domain_data.relationships != domain_data.relationships:
+            raise ValueError("Relationship mismatch between DomainCreate and TempOnboardDomain")
+ 
+        new_domain = Domain(
+            name=domain_data.name,
+            description=domain_data.description,
+            purpose=domain_data.purpose,
+            workspace_id=domain_data.workspace_id,
+            connection_id=domain_data.connection_id,
+            default_llm_provider=domain_data.default_llm_provider,
+            default_llm_model=domain_data.default_llm_model,
+            last_updated_date=datetime.now(timezone.utc),
+            last_metadata_refresh_date=datetime.now(timezone.utc),
+            last_metadata_update_date=datetime.now(timezone.utc),
+            knowledgebase_validation_status="INPROGRESS"
+        )
+ 
+        db.add(new_domain)
+        db.flush()
+ 
+        for tag in domain_data.tags:
+            tag_obj = Tag(object_id=new_domain.id, object_type="domain", tag_name=tag)
+            db.add(tag_obj)
+ 
+        for datasource_id in domain_data.datasource_ids:
+            link = DomainDatasourceLink(domain_id=new_domain.id, datasource_id=datasource_id)
+            db.add(link)
+ 
+        knowledge_base_items = []
+ 
+        for target_response in domain_data.knowledge_docs.target_response:
+            knowledge_base_items.append(
+                {
+                    "knowledgebase_type": "target_response",
+                    "value": {
+                        "question": target_response.question,
+                        "sql_query": target_response.sql_query,
+                        "is_valid": target_response.is_valid,
+                        "message": target_response.message,
+                    },
+                }
+            )
+ 
+        for kpi_definition in domain_data.knowledge_docs.kpi_definitions:
+            knowledge_base_items.append(
+                {
+                    "knowledgebase_type": "kpi_definition",
+                    "value": {
+                        "kpi_name": kpi_definition.kpi_name,
+                        "kpi_description": kpi_definition.kpi_description,
+                        "kpi_formula": kpi_definition.kpi_formula,
+                        "is_valid": kpi_definition.is_valid,
+                        "message": kpi_definition.message,
+                    },
+                }
+            )
+ 
+        for item in knowledge_base_items:
+            knowledge_base = KnowledgeBase(
+                domain_id=new_domain.id,
+                knowledgebase_type=item["knowledgebase_type"],
+                value=item["value"],
+                status="INPROGRESS",
+                knowledgebase_chunk_id=uuid4()
+            )
+            db.add(knowledge_base)
+ 
+        db.commit()
+        db.refresh(new_domain)
+        return new_domain
+ 
