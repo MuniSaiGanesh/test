@@ -1,6 +1,49 @@
 from uuid import UUID
 from sqlmodel import Session, select
 
+#------------------
+def get_llm_settings_by_name(session: Session, llm_model_name: str) -> AdminLLMModelSettingsBase | None:
+    """Retrieves LLM settings by name."""
+    return session.query(AdminLLMModelSettingsBase).filter(AdminLLMModelSettingsBase.llm_model_name == llm_model_name).first()
+
+# Example usage:
+llm_model_name = "your_llm_model_name"  # Replace with the actual name
+llm_settings = get_llm_settings_by_name(session, llm_model_name)
+
+if llm_settings is None:
+    raise ValueError(f"No LLM settings found for name: {llm_model_name}")
+#---------------
+def get_workspace_by_id(session: Session, workspace_id: UUID) -> WorkspaceBase | None:
+    """Retrieves a workspace by its ID."""
+    statement = select(WorkspaceBase).where(WorkspaceBase.id == workspace_id)
+    return session.exec(statement).first()
+
+# Example usage:
+workspace_id_str = "your_workspace_id_from_frontend"  # Replace with actual ID string
+workspace_id = UUID(workspace_id_str)  # Convert to UUID
+workspace = get_workspace_by_id(session, workspace_id)
+
+if workspace is None:
+    raise ValueError(f"No workspace found with ID: {workspace_id}")
+#------------------------
+workspace.default_llm_model = llm_settings.id  # Assuming you want to set the default LLM model
+
+# Similarly, update other default settings if needed:
+# workspace.default_embedding_model = ...
+# workspace.default_llm_provider = ...
+# workspace.default_embedding_provider = ...
+#-------------------------
+def get_llm_settings_by_name(session: Session, llm_model_name: str) -> AdminLLMModelSettingsBase | None:
+    """Retrieves LLM settings by name."""
+    return session.query(AdminLLMModelSettingsBase).filter(AdminLLMModelSettingsBase.llm_model_name == llm_model_name).first()
+
+# Example usage:
+llm_model_name = "your_llm_model_name"  # Replace with the actual name
+llm_settings = get_llm_settings_by_name(session, llm_model_name)
+
+if llm_settings is None:
+    raise ValueError(f"No LLM settings found for name: {llm_model_name}")
+
 def configure_workspace_llm(session: Session, workspace_id_str: str, llm_model_name: str):
     """Configures the default LLM settings for a workspace."""
 
