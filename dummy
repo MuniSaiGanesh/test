@@ -1,0 +1,20 @@
+from uuid import UUID
+from sqlmodel import Session, select
+
+def configure_workspace_llm(session: Session, workspace_id_str: str, llm_model_name: str):
+    """Configures the default LLM settings for a workspace."""
+
+    llm_settings = get_llm_settings_by_name(session, llm_model_name)
+    if llm_settings is None:
+        raise ValueError(f"No LLM settings found for name: {llm_model_name}")
+
+    workspace_id = UUID(workspace_id_str)
+    workspace = get_workspace_by_id(session, workspace_id)
+    if workspace is None:
+        raise ValueError(f"No workspace found with ID: {workspace_id}")
+
+    workspace.default_llm_model = llm_settings.id
+    session.add(workspace)
+    session.commit()
+    session.refresh(workspace)
+    return workspace  # Return the updated workspace object
