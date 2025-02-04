@@ -1,0 +1,146 @@
+Here’s how you can implement the required changes:
+
+---
+
+### **1. Create `.env` and `.env.example` Files**
+Inside the `backend` folder:
+
+#### **`.env` (Not committed to Git)**
+```env
+POSTGRES_USERNAME=myuser
+POSTGRES_PASSWORD=mypassword
+POSTGRES_DB=mydb
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+SECRET_KEY=supersecretkey
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=redispassword
+SUPERUSER_USERNAME=admin
+SUPERUSER_PASSWORD=adminpassword
+```
+
+#### **`.env.example` (Committed to Git)**
+```env
+POSTGRES_USERNAME=
+POSTGRES_PASSWORD=
+POSTGRES_DB=
+POSTGRES_HOST=
+POSTGRES_PORT=
+SECRET_KEY=
+REDIS_HOST=
+REDIS_PORT=
+REDIS_PASSWORD=
+SUPERUSER_USERNAME=
+SUPERUSER_PASSWORD=
+```
+
+---
+
+### **2. Modify `settings.py` Using Pydantic**
+Create or modify `settings.py` in the backend folder:
+
+```python
+from pydantic import BaseSettings
+
+class Settings(BaseSettings):
+    POSTGRES_USERNAME: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_DB: str
+    POSTGRES_HOST: str
+    POSTGRES_PORT: int
+    SECRET_KEY: str
+    REDIS_HOST: str
+    REDIS_PORT: int
+    REDIS_PASSWORD: str
+    SUPERUSER_USERNAME: str
+    SUPERUSER_PASSWORD: str
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+settings = Settings()
+```
+
+Now, all environment variables should be accessed using `settings.VAR_NAME`, e.g., `settings.POSTGRES_USERNAME`.
+
+---
+
+### **3. Update Kubernetes Deployment Files**
+In your Kubernetes deployment YAML, update environment variables as follows:
+
+#### **Example Deployment File (`deployment.yml`)**
+```yaml
+env:
+  - name: POSTGRES_USERNAME
+    value: "myuser"
+  - name: POSTGRES_DB
+    value: "mydb"
+  - name: POSTGRES_HOST
+    value: "postgres-service"
+  - name: POSTGRES_PORT
+    value: "5432"
+  - name: REDIS_HOST
+    value: "redis-service"
+  - name: REDIS_PORT
+    value: "6379"
+  - name: SECRET_KEY
+    valueFrom:
+      secretKeyRef:
+        name: backend-secrets
+        key: SECRET_KEY
+  - name: POSTGRES_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: backend-secrets
+        key: POSTGRES_PASSWORD
+  - name: REDIS_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: backend-secrets
+        key: REDIS_PASSWORD
+  - name: SUPERUSER_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: backend-secrets
+        key: SUPERUSER_PASSWORD
+```
+
+#### **Secrets in Kubernetes (`backend-secrets.yml`)**
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backend-secrets
+type: Opaque
+data:
+  SECRET_KEY: c3VwZXJzZWNyZXRrZXk=  # Base64 encoded
+  POSTGRES_PASSWORD: bXlwYXNzd29yZA==
+  REDIS_PASSWORD: cmVkaXNwYXNzd29yZA==
+  SUPERUSER_PASSWORD: YWRtaW5wYXNzd29yZA==
+```
+
+Encode values using:
+```bash
+echo -n 'your-secret-value' | base64
+```
+
+---
+
+### **4. Update All Code References**
+Replace all hardcoded environment variable usages with:
+```python
+settings.POSTGRES_USERNAME
+settings.POSTGRES_PASSWORD
+...
+```
+
+---
+
+### **5. Coordinate with the Team**
+- Inform everyone that they must use `settings.VAR_NAME` going forward.
+- Ensure `.env.example` is updated in `develop_new` and `.env` is ignored in `.gitignore`.
+- Verify Kubernetes secrets handling against `autobi-service`.
+
+This should ensure a secure and maintainable environment variable setup. Let me know if you need adjustments!
