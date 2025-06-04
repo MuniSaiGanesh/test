@@ -1,0 +1,146 @@
+import re
+import pandas as pd
+from faker import Faker
+import random
+
+fake = Faker()
+Faker.seed(42)
+random.seed(42)
+
+# ---------------------------
+# Parse DDL Blocks
+# ---------------------------
+def split_blocks_by_dash(ddl_text):
+    return [block.strip() for block in ddl_text.split('--') if block.strip()]
+
+def extract_table_details(block):
+    create_match = re.search(r'CREATE\s+(SET|MULTISET)?\s*TABLE\s+([A-Za-z0-9_\.]+)', block, re.IGNORECASE)
+    if not create_match:
+        return None, None
+    table_name = create_match.group(2)
+    paren_start = block.find('(')
+    paren_end = block.rfind(')')
+    if paren_start == -1 or paren_end == -1 or paren_end < paren_start:
+        return table_name, None
+    column_block = block[paren_start + 1:paren_end]
+    column_lines = [line.strip() for line in column_block.split(',') if line.strip()]
+    columns = []
+    for line in column_lines:
+        parts = line.split(None, 1)
+        if len(parts) < 2:
+            continue
+        col_name = parts[0]
+        type_match = re.match(r'([A-Z]+)(\(\d+(,\d+)?\))?', parts[1], re.IGNORECASE)
+        if type_match:
+            data_type = type_match.group(0).upper()
+            columns.append((col_name, data_type))
+    return table_name, columns
+
+# ---------------------------
+# Parse SQL constraints
+# ---------------------------
+def extract_constraints_from_sql(sql_text):
+    constraints = {}
+    for match in re.finditer(r"WHEN\s+([^\s]+)\s*=\s*'([^']+)'", sql_text, re.IGNORECASE):
+        column, value = match.groups()
+        constraints.setdefault(column, set()).add(value)
+    for match in re.finditer(r"([A-Z_\.]+)\s+IN\s+\(([^)]+)\)", sql_text, re.IGNORECASE):
+        column = match.group(1).split('.')[-1]
+        values = [v.strip().strip("'") for v in match.group(2).split(',')]
+        constraints.setdefault(column, set()).update(values)
+    for match in re.finditer(r"([A-Z_\.]+)\s+LIKE\s+'([^']+)'", sql_text, re.IGNORECASE):
+        column = match.group(1).split('.')[-1]
+        pattern = match.group(2).replace('%', '').replace('_', '')
+        constraints.setdefault(column, set()).add(pattern)
+    for match in re.finditer(r"([A-Z_\.]+)\s*=\s*'([^']+)'", sql_text, re.IGNORECASE):
+        column = match.group(1).split('.')[-1]
+        value = match.group(2)
+        constraints.setdefault(column, set()).add(value)
+    return constraints
+
+# ---------------------------
+# Generate constrained values
+# ---------------------------
+def generate_value_for_type(data_type, col_name=None, constraints=None):
+    col_constraints = constraints.get(col_name, set()) if constraints else None
+    if 'VARCHAR' in data_type or 'CHAR' in data_type:
+        if col_constraints:
+            return random.choice(list(col_constraints))
+        size = int(re.search(r'\((\d+)\)', data_type).group(1)) if '(' in data_type else 10
+        return fake.text(max_nb_chars=size).replace('\n', ' ')[:size]
+    elif 'BYTEINT' in data_type or 'INTEGER' in data_type:
+        if col_constraints:
+            try:
+                numeric_vals = [int(v) for v in col_constraints]
+                return random.choice(numeric_vals)
+            except:
+                pass
+        return random.randint(0, 100)
+    elif 'DECIMAL' in data_type or 'NUMERIC' in data_type:
+        match = re.search(r'\((\d+),(\d+)\)', data_type)
+        if match:
+            precision, scale = int(match.group(1)), int(match.group(2))
+            return round(random.uniform(0, 10 ** (precision - scale)), scale)
+        return round(random.uniform(0, 10000), 2)
+    elif 'DATE' in data_type:
+        return fake.date()
+    return fake.word()
+
+# ---------------------------
+# Generate DataFrame
+# ---------------------------
+def generate_dataframe_for_table(columns, constraints, num_rows=10):
+    data = {}
+    for col_name, data_type in columns:
+        data[col_name] = [generate_value_for_type(data_type, col_name, constraints) for _ in range(num_rows)]
+    return pd.DataFrame(data)
+
+# ---------------------------
+# Main Processor
+# ---------------------------
+def process_ddl_and_sql(ddl_text, sql_text, num_rows=10):
+    constraints = extract_constraints_from_sql(sql_text)
+    blocks = split_blocks_by_dash(ddl_text)
+    for block in blocks:
+        table_name, columns = extract_table_details(block)
+        if table_name and columns:
+            print(f"\n📘 Generating data for table: {table_name}")
+            df = generate_dataframe_for_table(columns, constraints, num_rows)
+            print(df.head(), "\n")
+            df.to_csv(f"{table_name.replace('.', '_')}_synthetic.csv", index=False)
+
+# ---------------------------
+# Matching DDL and SQL Inputs
+# ---------------------------
+ddl_input = """
+-- table:demo.users
+CREATE TABLE demo.users (
+    user_id INTEGER,
+    name VARCHAR(50),
+    gender VARCHAR(6),
+    email VARCHAR(100),
+    created_at DATE
+);
+-- table:demo.transactions
+CREATE TABLE demo.transactions (
+    txn_id INTEGER,
+    user_id INTEGER,
+    amount DECIMAL(10,2),
+    txn_type VARCHAR(10),
+    txn_date DATE
+);
+"""
+
+sql_input = """
+SELECT u.user_id, u.name, t.amount, t.txn_type
+FROM demo.users u
+JOIN demo.transactions t ON u.user_id = t.user_id
+WHERE u.gender = 'Male'
+AND t.txn_type IN ('credit', 'debit')
+AND u.email LIKE '%@example.com';
+"""
+
+# ---------------------------
+# Run it
+# ---------------------------
+process_ddl_and_sql(ddl_input, sql_input, num_rows=8)
